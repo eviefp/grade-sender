@@ -22,25 +22,7 @@ description:         Please see the README on Github at <https://github.com/cvla
 dependencies:
 - base >= 4.7 && < 5
 
-library:
-  source-dirs: src
-  ghc-options: -Wall -O2 -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints
-  dependencies:
-  - aeson
-  - attoparsec
-  - bytestring
-  - cassava
-  - directory
-  - glabrous
-  - HaskellNet
-  - HaskellNet-SSL
-  - mtl
-  - split
-  - text
-  - unordered-containers
-  - vector
-  - yaml
-  default-extensions:
+default-extensions:
   - BangPatterns
   - ConstraintKinds
   - DataKinds
@@ -65,6 +47,26 @@ library:
   - TypeOperators
   - UnicodeSyntax
   - ViewPatterns
+
+library:
+  source-dirs: src
+  ghc-options: -Wall -O2 -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints
+  dependencies:
+  - aeson
+  - attoparsec
+  - bytestring
+  - cassava
+  - cmdargs
+  - directory
+  - glabrous
+  - HaskellNet
+  - HaskellNet-SSL
+  - mtl
+  - split
+  - text
+  - unordered-containers
+  - vector
+  - yaml
 
 executables:
   grade-sender-exe:
