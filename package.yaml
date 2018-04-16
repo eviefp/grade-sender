@@ -26,15 +26,20 @@ library:
   source-dirs: src
   ghc-options: -Wall -O2 -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints
   dependencies:
+  - aeson
   - attoparsec
   - bytestring
   - cassava
+  - directory
+  - glabrous
   - HaskellNet
   - HaskellNet-SSL
   - mtl
+  - split
   - text
   - unordered-containers
   - vector
+  - yaml
   default-extensions:
   - BangPatterns
   - ConstraintKinds

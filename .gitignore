@@ -1,3 +1,4 @@
 .stack-work/
 grade-sender.cabal
+config/grade-sender.yaml
 *~
