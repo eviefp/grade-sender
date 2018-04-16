@@ -19,7 +19,7 @@ import           Data.HashMap.Strict         (lookupDefault, toList)
 import           Data.Maybe                  (fromMaybe)
 import           Data.Text                   (unpack)
 import           Data.Text.Encoding          (decodeUtf8)
-import           Data.Text.Lazy              (Text, fromStrict)
+import           Data.Text.Lazy              (fromStrict)
 import           Data.Vector                 (Vector)
 import           Data.Yaml.Config            (loadYamlSettings, useEnv)
 import           Network.HaskellNet.Auth     (Password, UserName)
@@ -30,10 +30,10 @@ import           Prelude                     (Applicative, Either (Left, Right),
                                               FilePath, Functor, IO,
                                               Maybe (Just, Nothing), Monad,
                                               Show, String, fmap, print, pure,
-                                              putStrLn, snd, ($), (++), (.),
-                                              (<$>))
-import           Text.Glabrous               (Template, fromList, process,
-                                              readTemplateFile)
+                                              putStrLn, show, snd, ($), (++),
+                                              (.), (<$>))
+import           Text.Glabrous               (Result (..), Template, fromList,
+                                              partialProcess', readTemplateFile)
 
 
 (∘) ∷ (b → c) → (a → b) → a → c
@@ -120,8 +120,8 @@ parseGradeFiles = do
 
 
 data CsvRow = CsvRow
-  { crEmail   ∷ ByteString
-  , crRows    ∷ NamedRecord
+  { crEmail ∷ ByteString
+  , crRows  ∷ NamedRecord
   } deriving (Show)
 
 parse ∷ NamedRecord → CsvRow
@@ -142,17 +142,23 @@ doGradeMail vect = do
         authSucceed ← authenticate LOGIN appSmtpUsername appSmtpPassword conn
         if authSucceed
           then
-            let sendMails = unAppT ∘ traverse_ (\r → sendMail (constructBody r template) conn r) $ vect
+            let sendMails = unAppT ∘ traverse_ (sendMail template conn) $ vect
             in runReaderT sendMails settings
           else putStrLn "Authentication failed."
 
-sendMail ∷ Text → SMTPConnection → CsvRow → AppT IO ()
-sendMail body conn CsvRow{..} = do
+sendMail ∷ Template → SMTPConnection → CsvRow → AppT IO ()
+sendMail tpl conn row@CsvRow{..} = do
   settings ← ask
   let AppSettings {..} = settings
-  liftIO $ sendPlainTextMail (unpack ∘ decodeUtf8 $ crEmail) appEmailFrom appEmailTitle body conn
+  let receiver = unpack ∘ decodeUtf8 $ crEmail
+  let result = constructBody row tpl
+  case result of
+    Partial {..} → liftIO ∘ print $ "Missing fields: " ++ show context
+    Final strictText → do
+      liftIO $ sendPlainTextMail receiver appEmailFrom appEmailTitle (fromStrict strictText) conn
+      liftIO ∘ putStrLn $ "Sent email to " ++ receiver
 
-constructBody ∷ CsvRow → Template → Text
+constructBody ∷ CsvRow → Template → Result
 constructBody CsvRow{..} template =
-  fromStrict $ process template (fromList ∘ fmap (bimap decodeUtf8 decodeUtf8) ∘ toList $ crRows)
+  partialProcess' template (fromList ∘ fmap (bimap decodeUtf8 decodeUtf8) ∘ toList $ crRows)
 
