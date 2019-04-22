@@ -16,7 +16,7 @@ import           Data.Csv                       (NamedRecord)
 import           Data.Csv.Parser                (csvWithHeader,
                                                  defaultDecodeOptions)
 import           Data.Foldable                  (traverse_)
-import           Data.HashMap.Strict            (lookupDefault, toList)
+import           Data.HashMap.Strict            (lookup, toList)
 import           Data.List                      (intersperse)
 import           Data.Maybe                     (fromJust)
 import           Data.Text                      (unpack)
@@ -33,10 +33,10 @@ import           Prelude                        (Applicative, Bool,
                                                  Either (Left, Right), FilePath,
                                                  Functor, IO,
                                                  Maybe (Just, Nothing), Monad,
-                                                 Show, String, fmap, getLine,
-                                                 mconcat, print, pure, putStrLn,
-                                                 show, snd, ($), (++), (.),
-                                                 (<$>))
+                                                 Show, String, fmap, getLine, id,
+                                                 maybe, mconcat, print, pure,
+                                                 putStrLn, show, snd, ($), (++),
+                                                 (.), (<$>))
 import           System.Console.CmdArgs         (Data, Typeable, cmdArgs,
                                                  details, help, program,
                                                  summary, typ, (&=))
@@ -189,8 +189,12 @@ data CsvRow = CsvRow
 
 parse ∷ NamedRecord → CsvRow
 parse hm = CsvRow
-             (lookupDefault "" "Email"   hm)
+             email
              hm
+      where
+        maybeEmail = lookup "Email" hm <|> lookup "EMAIL" hm <|> lookup "email" hm
+        email = maybe "" id maybeEmail
+        
 
 -- | Read template file, connect to the gmail server and
 -- traverse the rows in the grade csv file with sendMail.
