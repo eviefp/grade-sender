@@ -1,3 +1,5 @@
+{-# language OverloadedStrings #-}
+
 module Lib
     ( runGradeStudents
     ) where
@@ -18,23 +20,16 @@ import           Data.Csv.Parser                (csvWithHeader,
 import           Data.Foldable                  (traverse_)
 import           Data.HashMap.Strict            (lookup, toList)
 import           Data.List                      (intersperse)
-import           Data.Maybe                     (fromJust)
-import           Data.Text                      (unpack)
+import           Data.Maybe                     (fromMaybe, fromJust)
 import           Data.Text.Encoding             (decodeUtf8)
 import           Data.Text.Lazy                 (fromStrict)
 import           Data.Vector                    (Vector)
 import           Data.Yaml.Config               (loadYamlSettings, useEnv)
-import           Network.HaskellNet.Auth        (Password, UserName)
-import           Network.HaskellNet.SMTP        (AuthType (LOGIN),
-                                                 SMTPConnection,
-                                                 sendPlainTextMail)
-import           Network.HaskellNet.SMTP.SSL    (authenticate, doSMTPSTARTTLS)
 import           Prelude                        (Applicative, Bool, 
                                                  Either (Left, Right), FilePath,
                                                  Functor, IO,
                                                  Maybe (Just, Nothing), Monad,
-                                                 Show, String, fmap, getLine, id,
-                                                 maybe, mconcat, print, pure,
+                                                 Show, String, fmap, getLine, mconcat, print, pure,
                                                  putStrLn, show, snd, ($), (++),
                                                  (.), (<$>))
 import           System.Console.CmdArgs         (Data, Typeable, cmdArgs,
@@ -44,21 +39,19 @@ import           System.Console.CmdArgs.Default (def)
 import           Text.Glabrous                  (Result (..), Template,
                                                  fromList, partialProcess',
                                                  readTemplateFile)
-
-
--- | Unicode function composition.
-(∘) ∷ (b → c) → (a → b) → a → c
-(∘) = (.)
-
-infixr 9 ∘
+import qualified Network.Mail.SMTP as SMTP
+import Control.Exception (bracket)
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Network.Mail.Mime as Mime
 
 -- | Relative path for the config file.
-configPath ∷ FilePath
+configPath :: FilePath
 configPath = "config/grade-sender.yaml"
 
 -- | Sanity type synonyms.
 type SMTPHostName = String
-type EmailTitle = String
+type EmailTitle = Text
 type GradesCsvFile = FilePath
 type TemplateFile = FilePath
 
@@ -66,34 +59,34 @@ type TemplateFile = FilePath
 -- EmailTitle, GradesCsvFile and TemplateFile are ignored in the config file
 -- and read as arguments.
 data AppSettings = AppSettings
-  { appSmtpServer    ∷ SMTPHostName
-  , appSmtpUsername  ∷ UserName
-  , appSmtpPassword  ∷ Password
-  , appEmailFrom     ∷ String
-  , appEmailTitle    ∷ EmailTitle
-  , appGradesCsvFile ∷ GradesCsvFile
-  , appTemplateFile  ∷ TemplateFile
+  { appSmtpServer    :: SMTPHostName
+  , appSmtpUsername  :: String
+  , appSmtpPassword  :: String
+  , appEmailFrom     :: Text
+  , appEmailTitle    :: EmailTitle
+  , appGradesCsvFile :: GradesCsvFile
+  , appTemplateFile  :: TemplateFile
   }
 
 -- | Custom show instance because I don't like the default.
 instance Show AppSettings where
-    show AppSettings{..} = mconcat ∘ intersperse "\r\n" $
+    show AppSettings{..} = mconcat . intersperse "\r\n" $
       [ "SMTP Server: " ++ appSmtpServer
       , "SMTP Username: " ++ appSmtpUsername
       , "SMTP Password: " ++ appSmtpPassword
-      , "Email sent from: " ++ appEmailFrom
-      , "Email title: " ++ appEmailTitle
+      , "Email sent from: " ++ T.unpack appEmailFrom
+      , "Email title: " ++ T.unpack appEmailTitle
       , "Grades CSV file: " ++ appGradesCsvFile
       , "Template file: " ++ appTemplateFile
       ]
 
 -- | The Yaml parser actually uses this instance.
 instance FromJSON AppSettings where
-  parseJSON = withObject "AppSettings" $ \o → do
-    appSmtpServer    ← o .: "smtpServer"
-    appSmtpUsername  ← o .: "smtpUsername"
-    appSmtpPassword  ← o .: "smtpPassword"
-    appEmailFrom     ← o .: "emailFrom"
+  parseJSON = withObject "AppSettings" $ \o -> do
+    appSmtpServer    <- o .: "smtpServer"
+    appSmtpUsername  <- o .: "smtpUsername"
+    appSmtpPassword  <- o .: "smtpPassword"
+    appEmailFrom     <- o .: "emailFrom"
     let appEmailTitle    = ""
     let appGradesCsvFile = ""
     let appTemplateFile  = ""
@@ -111,14 +104,14 @@ instance Monad m ⇒ MonadReader AppSettings (AppT m) where
 
 -- | Command Line arguments for cmdArgs.
 data CommandArguments = CommandArguments
-  { title     ∷ Maybe EmailTitle
-  , grades    ∷ Maybe GradesCsvFile
-  , template_ ∷ Maybe TemplateFile
-  , force     ∷ Bool
+  { title     :: Maybe EmailTitle
+  , grades    :: Maybe GradesCsvFile
+  , template_ :: Maybe TemplateFile
+  , force     :: Bool
   } deriving (Show, Data, Typeable)
 
 -- | Command argument definition.
-argumentDefinition ∷ CommandArguments
+argumentDefinition :: CommandArguments
 argumentDefinition = CommandArguments
   { title     = def &= typ "TITLE" &= help "Title of the email to send."
   , grades    = def &= typ "FILE"  &= help "Grades csv file. Must contain Email column."
@@ -129,25 +122,25 @@ argumentDefinition = CommandArguments
     &= details ["More details at https://github.com/vladciobanu/grade-sender"]
 
 -- | Parse yaml and command line arguments and runGradeStudents'.
-runGradeStudents ∷ IO ()
+runGradeStudents :: IO ()
 runGradeStudents = do
-  args ← cmdArgs argumentDefinition
+  args <- cmdArgs argumentDefinition
   let CommandArguments{..} = args
-  case title <|> grades <|> template_ of
-    Nothing → putStrLn "Missing arguments. Please consult --help"
-    Just _ → do
-      settings ← readSettings (fromJust title) (fromJust grades) (fromJust template_)
+  case (T.unpack <$> title) <|> grades <|> template_ of
+    Nothing -> putStrLn "Missing arguments. Please consult --help"
+    Just _ -> do
+      settings <- readSettings (fromJust title) (fromJust grades) (fromJust template_)
       unless force $ do
         print settings
         putStrLn "\r\nPress enter to continue, or CTRL+C to cancel"
-        _ ← getLine
+        _ <- getLine
         pure ()
       runReaderT (unAppT runGradeStudents') settings
 
 -- | Read yaml file and fill settings with data from the command line.
-readSettings ∷ EmailTitle → GradesCsvFile → TemplateFile → IO AppSettings
+readSettings :: EmailTitle -> GradesCsvFile -> TemplateFile -> IO AppSettings
 readSettings emailTitle gradesFile templateFile = do
-  settings ← loadYamlSettings [configPath] [] useEnv
+  settings <- loadYamlSettings [configPath] [] useEnv
   let AppSettings {..} = settings
   pure $ AppSettings
             appSmtpServer
@@ -158,82 +151,88 @@ readSettings emailTitle gradesFile templateFile = do
             gradesFile
             templateFile
 
--- | Parse the grade file and call doGradeMail
-runGradeStudents' ∷ AppT IO ()
+-- | Parse the grade file and call.
+runGradeStudents' :: AppT IO ()
 runGradeStudents' = do
-  mgf ← parseGradeFile
+  mgf <- parseGradeFile
   case mgf of
-    Nothing → liftIO ∘ putStrLn $ "CSV Parse Error"
-    Just gf → do
+    Nothing -> liftIO . putStrLn $ "CSV Parse Error"
+    Just gf -> do
       let prs = parse <$> gf
       doGradeMail prs
 
 -- | Parses the grades csv file.
-parseGradeFile ∷ AppT IO (Maybe (Vector NamedRecord))
+parseGradeFile :: AppT IO (Maybe (Vector NamedRecord))
 parseGradeFile = do
-  settings ← ask
+  settings <- ask
   let AppSettings {..} = settings
   bs <- liftIO $ readFile appGradesCsvFile
   let res = parseOnly (csvWithHeader defaultDecodeOptions) bs
   case res of
     Left err -> do
-      liftIO ∘ putStrLn $ "Parse error:" ++ err
+      liftIO . putStrLn $ "Parse error:" ++ err
       pure Nothing
-    Right pr → pure . Just ∘ snd $ pr
+    Right pr -> pure . Just . snd $ pr
 
 -- | A row in the grades csv. Only requires the Email field.
 data CsvRow = CsvRow
-  { crEmail ∷ ByteString
-  , crRows  ∷ NamedRecord
+  { crEmail :: ByteString
+  , crRows  :: NamedRecord
   } deriving (Show)
 
-parse ∷ NamedRecord → CsvRow
+parse :: NamedRecord -> CsvRow
 parse hm = CsvRow
              email
              hm
       where
         maybeEmail = lookup "Email" hm <|> lookup "EMAIL" hm <|> lookup "email" hm
-        email = maybe "" id maybeEmail
-        
+        email = fromMaybe "" maybeEmail
 
 -- | Read template file, connect to the gmail server and
 -- traverse the rows in the grade csv file with sendMail.
 -- The template file is also parsed once.
-doGradeMail ∷ Vector CsvRow → AppT IO ()
+doGradeMail :: Vector CsvRow -> AppT IO ()
 doGradeMail vect = do
-  settings ← ask
+  settings <- ask
   let AppSettings {..} = settings
-  et ← liftIO $ readTemplateFile appTemplateFile
+  et <- liftIO $ readTemplateFile appTemplateFile
   case et of
-    Left err → liftIO ∘ putStrLn $ "Error parsing template file: " ++ err
-    Right template →
-      liftIO ∘ doSMTPSTARTTLS appSmtpServer $ \conn -> do
-        authSucceed ← authenticate LOGIN appSmtpUsername appSmtpPassword conn
-        if authSucceed
-          then
-            let sendMails = unAppT ∘ traverse_ (sendMail template conn) $ vect
-            in runReaderT sendMails settings
-          else putStrLn "Authentication failed."
+    Left err -> liftIO . putStrLn $ "Error parsing template file: " ++ err
+    Right template ->
+      liftIO . bracket (SMTP.connectSMTPS appSmtpServer) SMTP.closeSMTP $ \conn -> do
+        _ <- SMTP.login conn appSmtpUsername appSmtpPassword
+        let sendMails = unAppT . traverse_ (sendMail template conn) $ vect
+        runReaderT sendMails settings
 
 -- | Construct the email body. If the row is missing any of the used fields,
 -- it will not send an email.
-sendMail ∷ Template → SMTPConnection → CsvRow → AppT IO ()
+sendMail :: Template -> SMTP.SMTPConnection -> CsvRow -> AppT IO ()
 sendMail tpl conn row@CsvRow{..} = do
-  settings ← ask
+  settings <- ask
   let AppSettings {..} = settings
-  let receiver = unpack ∘ decodeUtf8 $ crEmail
+  let receiver = decodeUtf8 crEmail
   let result = constructBody row tpl
   case result of
-    Partial {..} → liftIO ∘ print $ "Missing fields: " ++ show context
-    Final strictText → do
-      liftIO $ sendPlainTextMail receiver appEmailFrom appEmailTitle (fromStrict strictText) conn
-      liftIO ∘ putStrLn $ "Sent email to " ++ receiver
+    Partial {..} -> liftIO . print $ "Missing fields: " ++ show context
+    Final strictText -> do
+      let mail =
+            SMTP.simpleMail
+              (toAddress appEmailFrom)
+              [toAddress receiver]
+              []
+              []
+              appEmailTitle
+              [Mime.plainPart $ fromStrict strictText]
+      liftIO $ SMTP.renderAndSend conn mail
+      liftIO . putStrLn $ "Sent email to " ++ T.unpack receiver
+  where
+    toAddress = SMTP.Address Nothing
 
 -- | crRows is a `HashMap ByteString ByteString`, so we first create a [(ByteString,ByteString)].
 -- Then, we fmap into the array with a bimap over the tuples, getting [(Text, Text)].
 -- glabrous' `partialProcess'` takes the template and a Context (which can be creaed with fromList)
 -- `partialProcess'` returns `Partial` if there are unmatched items in the template and
 -- `Final text` if it completed replacing.
-constructBody ∷ CsvRow → Template → Result
+constructBody :: CsvRow -> Template -> Result
 constructBody CsvRow{..} template =
-  partialProcess' template (fromList ∘ fmap (bimap decodeUtf8 decodeUtf8) ∘ toList $ crRows)
+  partialProcess' template (fromList . fmap (bimap decodeUtf8 decodeUtf8) . toList $ crRows)

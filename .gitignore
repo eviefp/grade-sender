@@ -1,4 +1,5 @@
 .stack-work/
-grade-sender.cabal
 config/grade-sender.yaml
 *~
+/dist-newstyle/
+/.envrc

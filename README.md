@@ -7,15 +7,15 @@ methods. There is no way to change them without updating the source code.
 
 ## Quickstart
 
-Before you start, make sure you have [stack](https://docs.haskellstack.org/en/stable/README/) installed.
+Before you start, make sure you have GHC 8.10.2 & cabal-install working on your system. One easy way to get them is through [ghcup](https://www.haskell.org/ghcup/).
 
 
 ```
-$ stack upgrade
+$ cabal update
 $ git clone https://github.com/vladciobanu/grade-sender.git
 $ cd grade-sender
-$ stack build
-$ stack exec grade-sender-exe -- --title="Email Title" --grades=/path/to/grades.csv --template=/path/to/template.tpl
+$ cabal build -j
+$ cabal run -- grade-sender-exe --title="Email Title" --grades=/path/to/grades.csv --template=/path/to/template.tpl
 ```
 
 ## Grade files CSV

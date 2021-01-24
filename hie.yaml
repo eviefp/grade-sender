@@ -1,0 +1,7 @@
+cradle:
+  cabal:
+    - path: "src"
+      component: "lib:grade-sender"
+
+    - path: "app/Main.hs"
+      component: "grade-sender:exe:grade-sender-exe"
